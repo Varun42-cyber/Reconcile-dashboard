@@ -6,16 +6,13 @@ import io
 from thefuzz import process
 
 # -------------------------------------------------
-# 1. DATA CLEANING ENGINE
+# 1. CLEAN VENDOR DATA
 # -------------------------------------------------
-def clean_data(df):
-    df.columns = [str(c).lower().strip().replace(" ", "_") for c in df.columns]
+def clean_vendor_data(df):
+    df.columns = [c.lower().strip().replace(" ", "_") for c in df.columns]
 
-    inv_col = next((c for c in df.columns if 'inv' in c or 'num' in c or 'id' in c or 'ref' in c), None)
-    amt_col = next((c for c in df.columns if 'amt' in c or 'amount' in c or 'total' in c or 'due' in c), None)
-
-    if not inv_col or not amt_col:
-        return None
+    inv_col = next(c for c in df.columns if 'invoice' in c or 'inv' in c)
+    amt_col = next(c for c in df.columns if 'amount' in c or 'due' in c)
 
     df['clean_id'] = (
         df[inv_col].astype(str)
@@ -27,8 +24,6 @@ def clean_data(df):
     df['clean_amount'] = (
         df[amt_col].astype(str)
         .str.replace(r'[,$\s]', '', regex=True)
-        .str.replace(r'\(', '-', regex=True)
-        .str.replace(r'\)', '', regex=True)
     )
 
     df['clean_amount'] = pd.to_numeric(df['clean_amount'], errors='coerce').fillna(0).round(2)
@@ -36,7 +31,37 @@ def clean_data(df):
     return df[['clean_id', 'clean_amount']]
 
 # -------------------------------------------------
-# 2. FUZZY MATCH ENGINE
+# 2. CLEAN INTERNAL DATA (FIXED COLUMNS)
+# -------------------------------------------------
+def clean_internal_data(df):
+    df = df.copy()
+
+    REQUIRED_COLS = ['External document number', 'Amount ($)']
+    missing = [c for c in REQUIRED_COLS if c not in df.columns]
+
+    if missing:
+        raise ValueError(f"Missing required internal columns: {missing}")
+
+    df['clean_id'] = (
+        df['External document number']
+        .astype(str)
+        .str.replace(r'\W+', '', regex=True)
+        .str.upper()
+        .str.lstrip('0')
+    )
+
+    df['clean_amount'] = (
+        df['Amount ($)']
+        .astype(str)
+        .str.replace(r'[,$\s]', '', regex=True)
+    )
+
+    df['clean_amount'] = pd.to_numeric(df['clean_amount'], errors='coerce').fillna(0).round(2)
+
+    return df[['clean_id', 'clean_amount']]
+
+# -------------------------------------------------
+# 3. FUZZY MATCH
 # -------------------------------------------------
 def perform_fuzzy_check(recon_df, internal_df, threshold=90):
     choices = internal_df['clean_id'].tolist()
@@ -50,25 +75,24 @@ def perform_fuzzy_check(recon_df, internal_df, threshold=90):
     return recon_df
 
 # -------------------------------------------------
-# 3. STREAMLIT UI
+# 4. STREAMLIT UI
 # -------------------------------------------------
-st.set_page_config(page_title="AI Finance Recon", layout="wide")
-st.title("📑 Professional Statement Reconciler")
-st.markdown("Secure in-memory reconciliation. No data is stored.")
+st.set_page_config(page_title="FedEx Invoice Reconciliation", layout="wide")
+st.title("📑 FedEx Invoice Reconciliation")
 
 c1, c2 = st.columns(2)
 with c1:
-    v_file = st.file_uploader("Upload Vendor PDF / Excel", type=['pdf', 'xlsx'])
+    v_file = st.file_uploader("Upload FedEx Statement (PDF / Excel)", type=["pdf", "xlsx"])
 with c2:
-    i_file = st.file_uploader("Upload Internal Books (Excel)", type=['xlsx'])
+    i_file = st.file_uploader("Upload Internal Statement (Excel)", type=["xlsx"])
 
 # -------------------------------------------------
-# 4. MAIN LOGIC
+# 5. MAIN LOGIC
 # -------------------------------------------------
 if v_file and i_file:
-    with st.spinner("Processing files..."):
+    with st.spinner("Reconciling invoices..."):
 
-        # ---------- VENDOR FILE ----------
+        # ----- Vendor -----
         if v_file.name.lower().endswith(".pdf"):
             rows = []
 
@@ -92,44 +116,36 @@ if v_file and i_file:
                         if match:
                             rows.append([
                                 match.group(1),
-                                match.group(3),
-                                match.group(4)
+                                match.group(4)  # Invoice face value
                             ])
 
             if not rows:
-                st.error("❌ No invoice data detected in PDF.")
+                st.error("No invoice rows found in FedEx PDF.")
                 st.stop()
 
-            df_v_raw = pd.DataFrame(
-                rows,
-                columns=["invoice_no", "invoice_amount", "amount_due"]
-            )
+            df_vendor_raw = pd.DataFrame(rows, columns=["invoice_no", "amount"])
 
         else:
-            df_v_raw = pd.read_excel(v_file)
+            df_vendor_raw = pd.read_excel(v_file)
 
-        # ---------- INTERNAL FILE ----------
-        df_i_raw = pd.read_excel(i_file)
+        # ----- Internal -----
+        df_internal_raw = pd.read_excel(i_file)
 
-        # ---------- CLEANING ----------
-        v_proc = clean_data(df_v_raw)
-        i_proc = clean_data(df_i_raw)
+        vendor = clean_vendor_data(df_vendor_raw)
+        internal = clean_internal_data(df_internal_raw)
 
-        if v_proc is None or i_proc is None:
-            st.error("❌ Could not identify Invoice or Amount columns.")
-            st.stop()
-
-        # ---------- RECONCILIATION ----------
+        # ----- Reconciliation -----
         recon = pd.merge(
-            v_proc, i_proc,
-            on='clean_id',
-            how='outer',
-            suffixes=('_vendor', '_internal')
+            vendor,
+            internal,
+            on="clean_id",
+            how="outer",
+            suffixes=("_vendor", "_internal")
         )
 
         recon['difference'] = (
-            recon['clean_amount_vendor'].fillna(0) -
-            recon['clean_amount_internal'].fillna(0)
+            recon['clean_amount_vendor'].fillna(0)
+            - recon['clean_amount_internal'].fillna(0)
         ).round(2)
 
         def get_status(row):
@@ -142,39 +158,19 @@ if v_file and i_file:
             return "✅ Matched"
 
         recon['status'] = recon.apply(get_status, axis=1)
+        recon = perform_fuzzy_check(recon, internal)
 
-        recon = perform_fuzzy_check(recon, i_proc)
+        # ----- Output -----
+        st.subheader("Reconciliation Result")
+        st.dataframe(recon, use_container_width=True)
 
-        # ---------- METRICS ----------
-        st.divider()
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total Items", len(recon))
-        m2.metric("Matched", (recon['status'] == "✅ Matched").sum())
-        m3.metric("Issues", recon['status'].str.contains("❌|⚠️|❓|💡").sum())
-        m4.metric("Net Variance", f"HKD {recon['difference'].sum():,.2f}")
-
-        # ---------- DISPLAY ----------
-        def color_status(val):
-            if "✅" in val:
-                return 'background-color:#d4edda'
-            if "⚠️" in val or "💡" in val:
-                return 'background-color:#fff3cd'
-            return 'background-color:#f8d7da'
-
-        st.subheader("Reconciliation Details")
-        st.dataframe(
-            recon.style.applymap(color_status, subset=['status']),
-            use_container_width=True
-        )
-
-        # ---------- EXPORT ----------
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            recon.to_excel(writer, index=False, sheet_name="Recon_Report")
+            recon.to_excel(writer, index=False, sheet_name="Recon")
 
         st.download_button(
-            "📥 Download Reconciliation Report",
+            "📥 Download Reconciliation",
             buffer.getvalue(),
-            "reconciliation_report.xlsx",
+            "fedex_invoice_reconciliation.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
