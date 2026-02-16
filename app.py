@@ -94,12 +94,12 @@ def perform_fuzzy_check(recon_df, internal_df, threshold=90):
 # -------------------------------------------------
 # 4. STREAMLIT UI
 # -------------------------------------------------
-st.set_page_config(page_title="FedEx Invoice Reconciliation", layout="wide")
-st.title("📑 FedEx Invoice Reconciliation Dashboard")
+st.set_page_config(page_title="Vendor Reconciliation Dashboard", layout="wide")
+st.title("📑 Vendor Reconciliation Dashboard")
 
 c1, c2 = st.columns(2)
 with c1:
-    v_file = st.file_uploader("Upload FedEx Statement (PDF / Excel)", type=["pdf", "xlsx"])
+    v_file = st.file_uploader("Upload Vendor Statement (PDF / Excel)", type=["pdf", "xlsx"])
 with c2:
     i_file = st.file_uploader("Upload Internal Statement (Excel)", type=["xlsx"])
 
@@ -118,17 +118,9 @@ if v_file and i_file:
                     if not text:
                         continue
                     for line in text.split("\n"):
-                        match = re.match(
-                            r'(\d{1,2}-\d{3}-\d{5})\s+'
-                            r'(Freight|Duty/Tax)\s+'
-                            r'\d{2}\s+\w+\s+\d{2}\s+'
-                            r'\d+\s+HKD\s+'
-                            r'([\d,]+\.\d{2})\s+'
-                            r'([\d,]+\.\d{2})',
-                            line
-                        )
+                        match = re.search(r'([\d\-]+).*?([\d,]+\.\d{2})$', line)
                         if match:
-                            rows.append([match.group(1), match.group(4)])
+                            rows.append([match.group(1), match.group(2)])
 
             if not rows:
                 st.error("No invoice data detected in vendor PDF.")
@@ -205,6 +197,6 @@ if v_file and i_file:
         st.download_button(
             "📥 Download Reconciliation Report",
             buffer.getvalue(),
-            "fedex_invoice_reconciliation.xlsx",
+            "vendor_reconciliation_report.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
