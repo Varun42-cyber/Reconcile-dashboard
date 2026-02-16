@@ -18,15 +18,8 @@ def clean_vendor_data(df):
         .str.replace(r'\s+', ' ', regex=True)
     )
 
-    inv_col = next(
-        (c for c in df.columns if 'invoice' in c or 'inv' in c),
-        None
-    )
-
-    amt_col = next(
-        (c for c in df.columns if 'amount' in c or 'due' in c),
-        None
-    )
+    inv_col = next((c for c in df.columns if 'invoice' in c or 'inv' in c), None)
+    amt_col = next((c for c in df.columns if 'amount' in c or 'due' in c), None)
 
     if not inv_col or not amt_col:
         raise ValueError(f"Vendor columns not detected. Found: {list(df.columns)}")
@@ -54,7 +47,7 @@ def clean_vendor_data(df):
     return df[['clean_id', 'clean_amount']]
 
 # -------------------------------------------------
-# 2. CLEAN INTERNAL DATA (ROBUST HEADER MATCHING)
+# 2. CLEAN INTERNAL DATA (NEGATIVE → POSITIVE)
 # -------------------------------------------------
 def clean_internal_data(df):
     df = df.copy()
@@ -68,26 +61,16 @@ def clean_internal_data(df):
         .str.replace(r'\s+', ' ', regex=True)
     )
 
-    # Find invoice number column
-    inv_col = next(
-        (
-            c for c in df.columns
-            if 'external' in c and 'document' in c
-        ),
-        None
-    )
-
-    # Find amount ($) column
-    amt_col = next(
-        (c for c in df.columns if 'amount' in c),
-        None
-    )
+    # Identify invoice number & amount columns
+    inv_col = next((c for c in df.columns if 'external' in c and 'document' in c), None)
+    amt_col = next((c for c in df.columns if 'amount' in c), None)
 
     if not inv_col or not amt_col:
         raise ValueError(
             f"Required internal columns not found. Found columns: {list(df.columns)}"
         )
 
+    # Clean invoice number
     df['clean_id'] = (
         df[inv_col]
         .astype(str)
@@ -96,6 +79,7 @@ def clean_internal_data(df):
         .str.lstrip('0')
     )
 
+    # Convert negative amounts to positive
     df['clean_amount'] = (
         df[amt_col]
         .astype(str)
@@ -105,6 +89,7 @@ def clean_internal_data(df):
     df['clean_amount'] = (
         pd.to_numeric(df['clean_amount'], errors='coerce')
         .fillna(0)
+        .abs()   # 🔥 KEY FIX
         .round(2)
     )
 
@@ -173,10 +158,7 @@ if v_file and i_file:
                 st.error("❌ No invoice data detected in FedEx PDF.")
                 st.stop()
 
-            df_vendor_raw = pd.DataFrame(
-                rows,
-                columns=["invoice_no", "amount"]
-            )
+            df_vendor_raw = pd.DataFrame(rows, columns=["invoice_no", "amount"])
 
         else:
             df_vendor_raw = pd.read_excel(v_file)
