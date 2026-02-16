@@ -177,18 +177,19 @@ if v_file and i_file:
         recon = perform_fuzzy_check(recon, internal)
 
         # -------- Split Buckets --------
-        missing_vendor_df = recon[recon['status'] == 'Missing in Vendor']
-        matched_df = recon[recon['status'] == 'Matched']
         other_exceptions_df = recon[
             ~recon['status'].isin(['Missing in Vendor', 'Matched'])
         ]
 
-        # -------- Dashboard --------
-        st.subheader("❌ Missing in Vendor")
-        st.dataframe(missing_vendor_df, use_container_width=True)
+        missing_vendor_df = recon[recon['status'] == 'Missing in Vendor']
+        matched_df = recon[recon['status'] == 'Matched']
 
+        # -------- Dashboard (ORDER FIXED) --------
         st.subheader("⚠️ Other Exceptions")
         st.dataframe(other_exceptions_df, use_container_width=True)
+
+        st.subheader("❌ Missing in Vendor")
+        st.dataframe(missing_vendor_df, use_container_width=True)
 
         with st.expander("✅ View Fully Matched Invoices"):
             st.dataframe(matched_df, use_container_width=True)
@@ -196,8 +197,8 @@ if v_file and i_file:
         # -------- Export --------
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-            missing_vendor_df.to_excel(writer, index=False, sheet_name="Missing_in_Vendor")
             other_exceptions_df.to_excel(writer, index=False, sheet_name="Other_Exceptions")
+            missing_vendor_df.to_excel(writer, index=False, sheet_name="Missing_in_Vendor")
             matched_df.to_excel(writer, index=False, sheet_name="Matched")
             recon.to_excel(writer, index=False, sheet_name="Full_Recon")
 
